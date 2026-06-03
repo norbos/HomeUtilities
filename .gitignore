@@ -1,0 +1,7 @@
+# Build artifacts
+*.hex
+*.elf
+*.o
+
+# Editor metadata
+.vscode/
