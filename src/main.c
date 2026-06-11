@@ -13,6 +13,43 @@
 #include <stdbool.h>
 #include "project.h"
 
+#define UART_BAUD 9600UL
+#define UBRR_VAL ((F_CPU / 16UL / UART_BAUD) - 1UL)
+
+/* Minimal UART helpers (TX only for debug prints) */
+void uart_init(void) {
+    /* Set baud */
+    UBRR0H = (uint8_t)(UBRR_VAL >> 8);
+    UBRR0L = (uint8_t)(UBRR_VAL & 0xFF);
+    /* Enable transmitter only (RX optional) */
+    UCSR0B = (1 << TXEN0);
+    /* Set frame: 8 data bits, no parity, 1 stop bit */
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+}
+
+void uart_putc(char c) {
+    while (!(UCSR0A & (1 << UDRE0)));
+    UDR0 = (uint8_t)c;
+}
+
+void uart_puts(const char *s) {
+    while (*s) uart_putc(*s++);
+}
+
+/* print unsigned decimal (simple) */
+void uart_putu32(uint32_t v) {
+    char buf[11];
+    int i = 0;
+    if (v == 0) { uart_putc('0'); return; }
+    while (v > 0 && i < (int)sizeof(buf)-1) {
+        buf[i++] = '0' + (v % 10);
+        v /= 10;
+    }
+    while (i--) uart_putc(buf[i]);
+}
+
+void uart_putln(const char *s) { uart_puts(s); uart_puts("\r\n"); }
+
 /* Timing constants */
 #define SIX_HOURS_IN_SEC 21600UL
 
@@ -79,10 +116,14 @@ void delay_seconds(uint16_t seconds) {
 
 int main(void) {
     io_init();
+    uart_init();
     interrupt_init();
 
     /* Enable global interrupts */
     sei();
+
+    uart_putln("BOOT");
+    uart_putln("HomeRoofDrain starting");
 
     uint32_t timer_counter = 0;
 
@@ -93,25 +134,34 @@ int main(void) {
 
         /* Trigger condition: 6 hours elapsed OR rain detected */
         if (timer_counter >= SIX_HOURS_IN_SEC || rain_detected) {
+            uart_putln("TRIGGER: checking pump");
             rain_detected = false;
             timer_counter = 0;
 
             /* Prime the pump for a short burst */
+            uart_putln("PRIME: ON");
             turn_pump_on();
             flow_pulse_count = 0;
             delay_seconds(PRIME_SECONDS);
 
+            uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+
             /* Evaluate initial flow */
             if (flow_pulse_count < PRIME_FLOW_MIN_PULSES) {
                 /* No significant flow detected -> stop immediately */
+                uart_putln("PRIME: no flow, OFF");
                 turn_pump_off();
             } else {
+                uart_putln("FLOW: detected, keep pumping");
                 /* Keep pumping while flow continues */
                 while (1) {
                     flow_pulse_count = 0;
                     delay_seconds(FLOW_CHECK_WINDOW_SEC);
 
+                    uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+
                     if (flow_pulse_count < FLOW_KEEPALIVE_MIN_PULSES) {
+                        uart_putln("FLOW: stopped, OFF");
                         break;
                     }
                 }
