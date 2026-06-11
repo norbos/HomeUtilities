@@ -13,8 +13,7 @@
 #include <stdbool.h>
 #include "project.h"
 
-/* UART settings */
-#define UART_BAUD 115200UL
+#define UART_BAUD 9600UL
 #define UBRR_VAL ((F_CPU / 16UL / UART_BAUD) - 1UL)
 
 /* Minimal UART helpers (TX only for debug prints) */
