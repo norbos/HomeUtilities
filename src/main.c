@@ -50,6 +50,13 @@ void uart_putu32(uint32_t v) {
 
 void uart_putln(const char *s) { uart_puts(s); uart_puts("\r\n"); }
 
+/* Prefix logs with uptime: <seconds>s: <message> */
+void uart_prefix_uptime(uint32_t uptime) {
+    uart_puts("uptime: ");
+    uart_putu32(uptime);
+    uart_puts("s: ");
+}
+
 /* Timing constants */
 /* For testing we use a 5-minute interval (300s). Change back to 21600UL for 6 hours. */
 #define CHECK_INTERVAL_SEC 300UL
@@ -128,34 +135,34 @@ int main(void) {
     /* Enable global interrupts */
     sei();
 
-    uart_putln("BOOT");
-    uart_putln("HomeRoofDrain starting");
-
     uint32_t timer_counter = 0;
 
+    uart_prefix_uptime(timer_counter); uart_putln("BOOT");
+    uart_prefix_uptime(timer_counter); uart_putln("HomeRoofDrain starting");
+
     /* Perform an immediate startup check */
-    uart_putln("STARTUP: performing initial check");
+    uart_prefix_uptime(timer_counter); uart_putln("STARTUP: performing initial check");
     {
         /* reuse trigger logic below by wrapping into a small block */
-        uart_putln("TRIGGER (startup)");
+        uart_prefix_uptime(timer_counter); uart_putln("TRIGGER (startup)");
         rain_detected = false;
         /* Prime the pump */
-        uart_putln("PRIME: ON");
+        uart_prefix_uptime(timer_counter); uart_putln("PRIME: ON");
         turn_pump_on();
         flow_pulse_count = 0;
         delay_seconds(PRIME_SECONDS);
-        uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+        uart_prefix_uptime(timer_counter); uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
         if (flow_pulse_count < PRIME_FLOW_MIN_PULSES) {
-            uart_putln("PRIME: no flow, OFF");
+            uart_prefix_uptime(timer_counter); uart_putln("PRIME: no flow, OFF");
             turn_pump_off();
         } else {
-            uart_putln("FLOW: detected, keep pumping");
+            uart_prefix_uptime(timer_counter); uart_putln("FLOW: detected, keep pumping");
             while (1) {
                 flow_pulse_count = 0;
                 delay_seconds(FLOW_CHECK_WINDOW_SEC);
-                uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+                uart_prefix_uptime(timer_counter); uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
                 if (flow_pulse_count < FLOW_KEEPALIVE_MIN_PULSES) {
-                    uart_putln("FLOW: stopped, OFF");
+                    uart_prefix_uptime(timer_counter); uart_putln("FLOW: stopped, OFF");
                     break;
                 }
             }
@@ -173,24 +180,24 @@ int main(void) {
 
         /* If ISR recorded rain events, log them (with uptime) and keep flag for handler */
         if (rain_event_count) {
-            uart_puts("RAIN event(s)="); uart_putu32(rain_event_count); uart_puts(" uptime="); uart_putu32(timer_counter); uart_putln("s");
+            uart_prefix_uptime(timer_counter); uart_puts("RAIN event(s)="); uart_putu32(rain_event_count); uart_putln("");
             /* consume events and leave rain_detected=true so trigger logic runs */
             rain_event_count = 0;
         }
 
         /* Trigger condition: interval elapsed OR rain detected */
         if (timer_counter >= CHECK_INTERVAL_SEC || rain_detected) {
-            uart_puts("TRIGGER at uptime="); uart_putu32(timer_counter); uart_putln("s");
+            uart_prefix_uptime(timer_counter); uart_putln("TRIGGER");
             rain_detected = false;
             timer_counter = 0;
 
             /* Prime the pump for a short burst */
-            uart_putln("PRIME: ON");
+            uart_prefix_uptime(timer_counter); uart_putln("PRIME: ON");
             turn_pump_on();
             flow_pulse_count = 0;
             delay_seconds(PRIME_SECONDS);
 
-            uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+            uart_prefix_uptime(timer_counter); uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
 
             /* Evaluate initial flow */
             if (flow_pulse_count < PRIME_FLOW_MIN_PULSES) {
@@ -198,16 +205,15 @@ int main(void) {
                 uart_putln("PRIME: no flow, OFF");
                 turn_pump_off();
             } else {
-                uart_putln("FLOW: detected, keep pumping");
+                uart_prefix_uptime(timer_counter); uart_putln("FLOW: detected, keep pumping");
                 /* Keep pumping while flow continues */
                 while (1) {
                     flow_pulse_count = 0;
                     delay_seconds(FLOW_CHECK_WINDOW_SEC);
-
-                    uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+                    uart_prefix_uptime(timer_counter); uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
 
                     if (flow_pulse_count < FLOW_KEEPALIVE_MIN_PULSES) {
-                        uart_putln("FLOW: stopped, OFF");
+                        uart_prefix_uptime(timer_counter); uart_putln("FLOW: stopped, OFF");
                         break;
                     }
                 }
