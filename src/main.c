@@ -50,8 +50,16 @@ void uart_putu32(uint32_t v) {
 
 void uart_putln(const char *s) { uart_puts(s); uart_puts("\r\n"); }
 
+/* Prefix logs with uptime: <seconds>s: <message> */
+void uart_prefix_uptime(uint32_t uptime) {
+    uart_puts("uptime: ");
+    uart_putu32(uptime);
+    uart_puts("s: ");
+}
+
 /* Timing constants */
-#define SIX_HOURS_IN_SEC 21600UL
+/* For testing we use a 5-minute interval (300s). Change back to 21600UL for 6 hours. */
+#define CHECK_INTERVAL_SEC 300UL
 
 /* Flow/behavior thresholds (tune as needed) */
 #define PRIME_SECONDS 30
@@ -61,6 +69,7 @@ void uart_putln(const char *s) { uart_puts(s); uart_puts("\r\n"); }
 
 volatile uint32_t flow_pulse_count = 0;
 volatile bool rain_detected = false;
+volatile uint16_t rain_event_count = 0; /* count ISR events to debounce/log in main */
 
 /* Initialize I/O registers */
 void io_init(void) {
@@ -71,8 +80,10 @@ void io_init(void) {
     /* Flow and Rain as inputs */
     DDRD &= ~((1 << FLOW_PIN) | (1 << RAIN_PIN));
 
-    /* Optionally enable internal pull-up for rain sensor if it's open-drain/active-low */
-    /* PORTD |= (1 << RAIN_PIN); */
+    /* Enable internal pull-ups for inputs so floating pins are stable when
+       sensors are disconnected. This prevents spurious interrupts.
+       If your sensor actively drives the line high/low, disable pull-up as needed. */
+    PORTD |= (1 << FLOW_PIN) | (1 << RAIN_PIN);
 }
 
 /* Initialize external interrupts: INT0 (FLOW) rising, INT1 (RAIN) falling */
@@ -95,6 +106,8 @@ ISR(INT0_vect) {
 
 /* ISR: rain detected (edge) */
 ISR(INT1_vect) {
+    /* Record event and set flag; actual logging/debounce handled in main loop */
+    rain_event_count++;
     rain_detected = true;
 }
 
@@ -122,29 +135,69 @@ int main(void) {
     /* Enable global interrupts */
     sei();
 
-    uart_putln("BOOT");
-    uart_putln("HomeRoofDrain starting");
-
     uint32_t timer_counter = 0;
+
+    uart_prefix_uptime(timer_counter); uart_putln("BOOT");
+    uart_prefix_uptime(timer_counter); uart_putln("HomeRoofDrain starting");
+
+    /* Perform an immediate startup check */
+    uart_prefix_uptime(timer_counter); uart_putln("STARTUP: performing initial check");
+    {
+        /* reuse trigger logic below by wrapping into a small block */
+        uart_prefix_uptime(timer_counter); uart_putln("TRIGGER (startup)");
+        rain_detected = false;
+        /* Prime the pump */
+        uart_prefix_uptime(timer_counter); uart_putln("PRIME: ON");
+        turn_pump_on();
+        flow_pulse_count = 0;
+        delay_seconds(PRIME_SECONDS);
+        uart_prefix_uptime(timer_counter); uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+        if (flow_pulse_count < PRIME_FLOW_MIN_PULSES) {
+            uart_prefix_uptime(timer_counter); uart_putln("PRIME: no flow, OFF");
+            turn_pump_off();
+        } else {
+            uart_prefix_uptime(timer_counter); uart_putln("FLOW: detected, keep pumping");
+            while (1) {
+                flow_pulse_count = 0;
+                delay_seconds(FLOW_CHECK_WINDOW_SEC);
+                uart_prefix_uptime(timer_counter); uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+                if (flow_pulse_count < FLOW_KEEPALIVE_MIN_PULSES) {
+                    uart_prefix_uptime(timer_counter); uart_putln("FLOW: stopped, OFF");
+                    break;
+                }
+            }
+            turn_pump_off();
+        }
+    }
+
+    /* After initial check, start normal periodic behavior */
+    timer_counter = 0;
 
     while (1) {
         /* Base state tracking: increment counter every 1 second */
         delay_seconds(1);
         timer_counter++;
 
-        /* Trigger condition: 6 hours elapsed OR rain detected */
-        if (timer_counter >= SIX_HOURS_IN_SEC || rain_detected) {
-            uart_putln("TRIGGER: checking pump");
+        /* If ISR recorded rain events, log them (with uptime) and keep flag for handler */
+        if (rain_event_count) {
+            uart_prefix_uptime(timer_counter); uart_puts("RAIN event(s)="); uart_putu32(rain_event_count); uart_putln("");
+            /* consume events and leave rain_detected=true so trigger logic runs */
+            rain_event_count = 0;
+        }
+
+        /* Trigger condition: interval elapsed OR rain detected */
+        if (timer_counter >= CHECK_INTERVAL_SEC || rain_detected) {
+            uart_prefix_uptime(timer_counter); uart_putln("TRIGGER");
             rain_detected = false;
             timer_counter = 0;
 
             /* Prime the pump for a short burst */
-            uart_putln("PRIME: ON");
+            uart_prefix_uptime(timer_counter); uart_putln("PRIME: ON");
             turn_pump_on();
             flow_pulse_count = 0;
             delay_seconds(PRIME_SECONDS);
 
-            uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+            uart_prefix_uptime(timer_counter); uart_puts("PRIME: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
 
             /* Evaluate initial flow */
             if (flow_pulse_count < PRIME_FLOW_MIN_PULSES) {
@@ -152,16 +205,15 @@ int main(void) {
                 uart_putln("PRIME: no flow, OFF");
                 turn_pump_off();
             } else {
-                uart_putln("FLOW: detected, keep pumping");
+                uart_prefix_uptime(timer_counter); uart_putln("FLOW: detected, keep pumping");
                 /* Keep pumping while flow continues */
                 while (1) {
                     flow_pulse_count = 0;
                     delay_seconds(FLOW_CHECK_WINDOW_SEC);
-
-                    uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
+                    uart_prefix_uptime(timer_counter); uart_puts("WINDOW: pulses="); uart_putu32(flow_pulse_count); uart_putln("");
 
                     if (flow_pulse_count < FLOW_KEEPALIVE_MIN_PULSES) {
-                        uart_putln("FLOW: stopped, OFF");
+                        uart_prefix_uptime(timer_counter); uart_putln("FLOW: stopped, OFF");
                         break;
                     }
                 }
