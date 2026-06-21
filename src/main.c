@@ -68,8 +68,8 @@ volatile uint32_t uptime_seconds = 0;
 #define CHECK_INTERVAL_SEC 60UL
 
 /* Flow/behavior thresholds (tune as needed) */
-#define PRIME_SECONDS 30
-#define PRIME_FLOW_MIN_PULSES 10
+#define PRIME_SECONDS 10
+#define PRIME_FLOW_MIN_PULSES 650
 #define FLOW_CHECK_WINDOW_SEC 5
 #define FLOW_KEEPALIVE_MIN_PULSES 2
 
@@ -92,10 +92,11 @@ void io_init(void) {
     PORTD |= (1 << FLOW_PIN) | (1 << RAIN_PIN);
 }
 
-/* Initialize external interrupts: INT0 (FLOW) rising, INT1 (RAIN) falling */
+/* Initialize external interrupts: INT0 (FLOW) falling, INT1 (RAIN) falling */
 void interrupt_init(void) {
-    /* INT0 (PD2) - rising edge */
-    EICRA |= (1 << ISC01) | (1 << ISC00);
+    /* INT0 (PD2) - Changed to FALLING edge: ISC01 = 1, ISC00 = 0 */
+    EICRA |= (1 << ISC01);   // Set ISC01 to 1
+    EICRA &= ~(1 << ISC00);  // Clear ISC00 to 0
 
     /* INT1 (PD3) - falling edge: ISC11 = 1, ISC10 = 0 */
     EICRA |= (1 << ISC11);
