@@ -64,8 +64,8 @@ void uart_prefix_uptime(void) {
 volatile uint32_t uptime_seconds = 0;
 
 /* Timing constants */
-/* For testing we use a 60-seconds interval (300s). Change back to 21600UL for 6 hours. */
-#define CHECK_INTERVAL_SEC 60UL
+/* Check interval set to 4 hours (14400 seconds) */
+#define CHECK_INTERVAL_SEC 14400UL
 
 /* Flow/behavior thresholds (tune as needed) */
 #define PRIME_SECONDS 10
